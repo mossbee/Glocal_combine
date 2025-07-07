@@ -107,7 +107,28 @@ class TwinTripletDataset(Dataset):
     def _load_tensor_file(self, tensor_path):
         """Load .pt tensor file for AdaFace"""
         try:
-            return torch.load(tensor_path)
+            tensor = torch.load(tensor_path)
+            
+            # Handle different tensor shapes
+            if tensor.dim() == 4:  # [1, 3, 112, 112]
+                tensor = tensor.squeeze(0)  # Remove batch dimension -> [3, 112, 112]
+            elif tensor.dim() == 3:  # [3, 112, 112] - already correct
+                pass
+            elif tensor.dim() == 2:  # Flattened case, need to reshape
+                if tensor.numel() == 3 * 112 * 112:
+                    tensor = tensor.view(3, 112, 112)
+                else:
+                    raise ValueError(f"Unexpected tensor shape: {tensor.shape}")
+            else:
+                raise ValueError(f"Unexpected tensor dimensions: {tensor.dim()}, shape: {tensor.shape}")
+            
+            # Ensure the tensor is the right shape [3, 112, 112]
+            if tensor.shape != (3, 112, 112):
+                print(f"Warning: Tensor shape {tensor.shape} from {tensor_path}, creating dummy tensor")
+                tensor = torch.randn(3, 112, 112)
+            
+            return tensor
+            
         except Exception as e:
             print(f"Error loading tensor {tensor_path}: {e}")
             # Return a dummy tensor if loading fails
