@@ -71,7 +71,8 @@ class TwinVerificationTrainer:
         self.model = TwinVerificationModel(
             adaface_arch=self.config['adaface_arch'],
             face_parts_embedding_dim=self.config['face_parts_embedding_dim'],
-            freeze_adaface=self.config['freeze_adaface']
+            freeze_adaface=self.config['freeze_adaface'],
+            final_embedding_dim=self.config['final_embedding_dim']
         )
         self.model.to(self.device)
         
@@ -81,6 +82,7 @@ class TwinVerificationTrainer:
         
         print(f"Total parameters: {total_params:,}")
         print(f"Trainable parameters: {trainable_params:,}")
+        print(f"Final embedding dimension: {self.config['final_embedding_dim']}D")
     
     def _setup_data_loaders(self, negative_strategy='random'):
         """Initialize train and validation data loaders with specified strategy"""
@@ -441,6 +443,11 @@ def main():
         'adaface_arch': 'ir_50',
         'face_parts_embedding_dim': 128,
         'freeze_adaface': True,
+        'final_embedding_dim': 512,  # 512D recommended for twin verification
+                                    # Options: 1152 (no compression, best quality)
+                                    #          768 (minimal compression) 
+                                    #          512 (standard, good balance)
+                                    #          256 (heavy compression, not recommended)
         
         # Two-Stage Training parameters
         'num_epochs': 100,  # Total epochs (will be split between stages)
@@ -479,6 +486,7 @@ def main():
     print("=" * 80)
     print("TWO-STAGE TWIN VERIFICATION TRAINING")
     print("=" * 80)
+    print(f"Final embedding dimension: {config['final_embedding_dim']}D")
     print(f"Stage 1: Random negatives (general face discrimination) - {config['stage_1_epochs']} epochs")
     print(f"Stage 2: Twin negatives (hard negative mining) - {config['stage_2_epochs']} epochs")
     print(f"Total epochs: {config['stage_1_epochs'] + config['stage_2_epochs']}")

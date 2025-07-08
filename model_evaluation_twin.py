@@ -28,6 +28,7 @@ CONFIG = {
 }
 
 print(f"Using device: {CONFIG['device']}")
+print("Note: Model uses configurable embedding dimension (512D by default)")
 
 # Create output directory
 os.makedirs(CONFIG['output_dir'], exist_ok=True)

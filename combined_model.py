@@ -8,7 +8,8 @@ import torchvision.transforms as transforms
 class TwinVerificationModel(nn.Module):
     """Combined model for twin verification using global + local features"""
     
-    def __init__(self, adaface_arch='ir_50', face_parts_embedding_dim=128, freeze_adaface=True):
+    def __init__(self, adaface_arch='ir_50', face_parts_embedding_dim=128, 
+                 freeze_adaface=True, final_embedding_dim=512):
         super(TwinVerificationModel, self).__init__()
         
         # Load frozen AdaFace model for global features (512D)
@@ -32,14 +33,39 @@ class TwinVerificationModel(nn.Module):
         self.global_dim = 512  # AdaFace output
         self.local_dim = 5 * face_parts_embedding_dim  # Face parts output
         self.total_dim = self.global_dim + self.local_dim  # Combined: 1152D
+        self.final_embedding_dim = final_embedding_dim
         
-        # Optional: Add a final projection layer for the combined features
-        self.final_projection = nn.Sequential(
-            nn.Linear(self.total_dim, 512),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(512, 256)
-        )
+        # Configure final projection based on desired output dimension
+        if final_embedding_dim == self.total_dim:
+            # No compression - keep all 1152D features (best for twin verification)
+            self.final_projection = nn.Identity()
+            print(f"Using full feature dimension: {self.total_dim}D (no compression)")
+        elif final_embedding_dim >= 768:
+            # Minimal compression for high-quality embeddings
+            self.final_projection = nn.Sequential(
+                nn.Linear(self.total_dim, final_embedding_dim),
+                nn.ReLU(),
+                nn.Dropout(0.1)
+            )
+            print(f"Using high-quality embedding: {final_embedding_dim}D")
+        elif final_embedding_dim >= 512:
+            # Standard compression (recommended for twin verification)
+            self.final_projection = nn.Sequential(
+                nn.Linear(self.total_dim, 768),
+                nn.ReLU(),
+                nn.Dropout(0.1),
+                nn.Linear(768, final_embedding_dim)
+            )
+            print(f"Using standard embedding: {final_embedding_dim}D")
+        else:
+            # Heavy compression (not recommended for twins, but available)
+            self.final_projection = nn.Sequential(
+                nn.Linear(self.total_dim, 512),
+                nn.ReLU(),
+                nn.Dropout(0.1),
+                nn.Linear(512, final_embedding_dim)
+            )
+            print(f"Warning: Using compressed embedding: {final_embedding_dim}D (may lose important features for twin verification)")
         
     def forward(self, adaface_tensor, face_parts_dict):
         """
@@ -50,7 +76,10 @@ class TwinVerificationModel(nn.Module):
             face_parts_dict: Dict of face parts tensors [batch_size, 3, 224, 224]
         
         Returns:
-            combined_features: [batch_size, total_dim] or [batch_size, 256] if using projection
+            final_features: [batch_size, final_embedding_dim]
+            combined_features: [batch_size, 1152] - full combined features
+            global_features: [batch_size, 512] - AdaFace features
+            local_features: [batch_size, 640] - Face parts features
         """
         # Extract global features using AdaFace (frozen)
         if self.freeze_adaface:
@@ -65,8 +94,8 @@ class TwinVerificationModel(nn.Module):
         # Combine global and local features
         combined_features = torch.cat([global_features, local_features], dim=1)  # [batch_size, 1152]
         
-        # Optional: Apply final projection
-        final_features = self.final_projection(combined_features)  # [batch_size, 256]
+        # Apply final projection to desired embedding dimension
+        final_features = self.final_projection(combined_features)
         
         return final_features, combined_features, global_features, local_features
 
@@ -172,7 +201,7 @@ def test_combined_model():
     print(f"Global features shape: {global_features.shape}")  # [4, 512]
     print(f"Local features shape: {local_features.shape}")    # [4, 640]
     print(f"Combined features shape: {combined_features.shape}")  # [4, 1152]
-    print(f"Final features shape: {final_features.shape}")    # [4, 256]
+    print(f"Final features shape: {final_features.shape}")    # [4, 512]
     
     # Test triplet loss
     triplet_loss = TripletLoss(margin=1.0)

@@ -91,6 +91,7 @@ def test_twin_inference():
         print(f"   Embedding shape: {embedding1.shape}")
         print(f"   Embedding range: [{embedding1.min():.4f}, {embedding1.max():.4f}]")
         print(f"   Embedding norm: {np.linalg.norm(embedding1):.4f}")
+        print(f"   Expected shape: ({model.embedding_dim},) - configurable dimension")
         
     except Exception as e:
         print(f"❌ Error in single inference: {e}")
@@ -105,7 +106,8 @@ def test_twin_inference():
         batch_embeddings = model.get_batch_embedding(batch_img_paths, batch_tensor_paths)
         print(f"✅ Batch inference successful")
         print(f"   Batch embeddings shape: {batch_embeddings.shape}")
-        print(f"   Expected shape: ({len(test_images)}, 256)")
+        print(f"   Expected shape: ({len(test_images)}, {model.embedding_dim})")
+        print(f"   Embedding dimension: {model.embedding_dim}D")
         
     except Exception as e:
         print(f"❌ Error in batch inference: {e}")

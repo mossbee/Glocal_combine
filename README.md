@@ -26,7 +26,12 @@ This approach follows the principle that **easier examples should be learned fir
 - **Global Features**: 512D from frozen AdaFace IR-50 model
 - **Local Features**: 5×128D (640D total) from trainable ResNet50 face parts models
   - Left eye, right eye, nose, mouth, chin regions
-- **Combined Features**: 1152D → 512D → 256D final embedding
+- **Combined Features**: 1152D → configurable final embedding
+- **Final Embedding**: Configurable dimension (512D recommended for twin verification)
+  - **1152D**: No compression, maximum feature retention (best for challenging cases)
+  - **768D**: Minimal compression, high quality
+  - **512D**: Standard dimension, good balance (default)
+  - **256D**: Heavy compression, not recommended for twins
 - **Loss Function**: Triplet loss with margin-based learning
 
 ### Face Parts Extraction
@@ -86,6 +91,10 @@ python model_evaluation_twin.py
 ### Two-Stage Parameters
 ```python
 config = {
+    # Model architecture
+    'final_embedding_dim': 512,     # Embedding dimension (512D recommended)
+                                   # Options: 1152, 768, 512, 256
+    
     # Two-Stage Training
     'stage_1_epochs': 60,           # General discrimination phase
     'stage_2_epochs': 40,           # Twin-specific phase
@@ -198,6 +207,39 @@ Resume automatically detects the current stage and continues appropriately.
 - **Minimum**: 2+ images per person, 1+ twin pair
 - **Recommended**: 5+ images per person, 3+ twin pairs
 - **Optimal**: 10+ images per person, 5+ twin pairs
+
+### Embedding Dimension Selection
+Choose the right embedding dimension for your use case:
+
+- **1152D (No Compression)**
+  - Best: When you have sufficient computational resources
+  - Best: For the most challenging twin pairs
+  - Best: When you need maximum discriminative power
+  - Cons: Higher memory usage, slower inference
+
+- **768D (Minimal Compression)**
+  - Good balance between quality and efficiency
+  - Suitable for most twin verification tasks
+  - Moderate computational requirements
+
+- **512D (Standard, Recommended)**
+  - **Default choice** for twin verification
+  - Good balance of performance and efficiency
+  - Compatible with most face recognition systems
+  - Standard dimension in face recognition literature
+
+- **256D (Heavy Compression)**
+  - Only for severely resource-constrained environments
+  - **Not recommended** for twin verification
+  - May lose important discriminative features
+
+```python
+# Configure embedding dimension in training
+config['final_embedding_dim'] = 512   # Recommended
+config['final_embedding_dim'] = 1152  # Best quality
+config['final_embedding_dim'] = 768   # High quality
+config['final_embedding_dim'] = 256   # Not recommended
+```
 
 ## Troubleshooting
 

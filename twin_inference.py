@@ -21,14 +21,25 @@ class TwinInference:
         """
         self.device = device if device else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        # Load the trained model
-        self.model = TwinVerificationModel(freeze_adaface=True)
-        
-        # Load checkpoint
+        # Load checkpoint to get model configuration
         checkpoint = torch.load(model_path, map_location=self.device)
+        config = checkpoint.get('config', {})
+        
+        # Initialize model with saved configuration
+        self.model = TwinVerificationModel(
+            adaface_arch=config.get('adaface_arch', 'ir_50'),
+            face_parts_embedding_dim=config.get('face_parts_embedding_dim', 128),
+            freeze_adaface=config.get('freeze_adaface', True),
+            final_embedding_dim=config.get('final_embedding_dim', 512)
+        )
+        
+        # Load model weights
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.model.to(self.device)
         self.model.eval()
+        
+        # Store embedding dimension for reference
+        self.embedding_dim = config.get('final_embedding_dim', 512)
         
         # Face parts configuration
         self.face_parts = {
@@ -43,6 +54,8 @@ class TwinInference:
         self.face_parts_transform = get_face_parts_transforms()
         
         print(f"Twin verification model loaded on {self.device}")
+        print(f"Embedding dimension: {self.embedding_dim}D")
+        print(f"Model configuration: {config.get('adaface_arch', 'ir_50')} + face parts")
     
     def _load_tensor_file(self, tensor_path):
         """Load .pt tensor file for AdaFace"""
@@ -136,7 +149,8 @@ class TwinInference:
             tensor_path: Path to the .pt tensor file for AdaFace
             
         Returns:
-            embedding: Numpy array of shape (256,) - the final embedding
+            embedding: Numpy array of shape (embedding_dim,) - the final embedding
+                      Default: 512D, configurable (256D, 512D, 768D, or 1152D)
         """
         with torch.no_grad():
             # Load AdaFace tensor
@@ -168,7 +182,8 @@ class TwinInference:
             tensor_paths: List of tensor paths (must match image_paths)
             
         Returns:
-            embeddings: Numpy array of shape (batch_size, 256)
+            embeddings: Numpy array of shape (batch_size, embedding_dim)
+                       Default embedding_dim: 512D, configurable
         """
         if len(image_paths) != len(tensor_paths):
             raise ValueError("Number of image paths must match number of tensor paths")
