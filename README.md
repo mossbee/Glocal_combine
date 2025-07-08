@@ -1,206 +1,226 @@
 # Twin Face Verification System
 
-A deep learning system for identical twin face verification that combines global facial features from AdaFace with local facial parts features using ResNet50.
+This project implements a twin face verification system that combines global features from AdaFace with local face parts features for improved identical twin identification.
 
-## Architecture Overview
+## Two-Stage Training Architecture
 
-The system combines two types of features:
-- **Global Features (512D)**: Extracted using frozen AdaFace IR-50 model from full face images
-- **Local Features (5×128D=640D)**: Extracted using trainable ResNet50 from 5 face parts (left eye, right eye, nose, mouth, chin)
-- **Final Features**: Combined 1152D features projected to 256D for similarity learning
+The system uses a **curriculum learning approach** with two distinct training stages:
 
-## Project Structure
+### Stage 1: General Face Discrimination (Random Negatives)
+- **Purpose**: Learn general face discrimination between different people
+- **Negative Sampling**: Random selection from all available people (easier negatives)
+- **Focus**: Building robust global and local feature representations
+- **Typical Duration**: 60% of total training epochs
 
-```
-face_parts/
-├── face_parts_extractor.py      # Pre-extract face parts from images
-├── face_parts_model.py          # ResNet50 models for face parts
-├── combined_model.py             # Combined AdaFace + Face parts model
-├── triplet_dataset.py           # Dataset for triplet learning
-├── train_twin_verification.py   # Main training script
-├── cutout.py                     # Face parts extraction utilities
-├── inference.py                  # AdaFace inference utilities
-├── net.py                        # AdaFace network architecture
-├── requirements.txt              # Python dependencies
-├── tensor_dataset.json           # Paths to .pt files (AdaFace input)
-├── jpg_dataset.json              # Paths to .jpg files (original images)
-├── twin_pairs.json               # Twin pairs information
-└── pretrained/
-    └── adaface_ir50_ms1mv2.ckpt  # Pretrained AdaFace model
-```
+### Stage 2: Twin-Specific Learning (Hard Negatives)
+- **Purpose**: Learn fine-grained features to distinguish identical twins
+- **Negative Sampling**: Specifically use twin siblings as negatives (hard negatives)
+- **Focus**: Refining features for twin discrimination
+- **Typical Duration**: 40% of total training epochs
 
-## Installation
+This approach follows the principle that **easier examples should be learned first**, allowing the model to establish general face understanding before tackling the challenging twin discrimination task.
 
-1. Install dependencies:
+## Architecture Details
+
+### Model Components
+- **Global Features**: 512D from frozen AdaFace IR-50 model
+- **Local Features**: 5×128D (640D total) from trainable ResNet50 face parts models
+  - Left eye, right eye, nose, mouth, chin regions
+- **Combined Features**: 1152D → 512D → 256D final embedding
+- **Loss Function**: Triplet loss with margin-based learning
+
+### Face Parts Extraction
+Uses MediaPipe face landmarks to extract and align face parts:
+- **Left Eye**: Landmarks 35-168
+- **Right Eye**: Landmarks 168-265
+- **Nose**: Landmarks 36-266
+- **Mouth**: Landmarks 61-291
+- **Chin**: Landmarks 32-262
+
+Each part is extracted as a 224×224 image and processed by individual ResNet50 models.
+
+## Quick Start
+
+### 1. Install Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Ensure you have the AdaFace pretrained model in `pretrained/adaface_ir50_ms1mv2.ckpt`
-
-## Usage
-
-### Step 1: Extract Face Parts
-
-First, pre-extract face parts from all images for faster training:
-
+### 2. Extract Face Parts (Required for Training)
 ```bash
-python face_parts_extractor.py
+python run_extraction.py
 ```
+This processes all images in your dataset and creates face parts in `extracted_face_parts/`.
 
-This will:
-- Process all images listed in `jpg_dataset.json`
-- Extract 5 face parts using MediaPipe landmarks
-- Save extracted parts in `extracted_face_parts/` directory
-- Create `extracted_face_parts/face_parts_dataset.json` mapping
-
-### Step 2: Train the Model
-
-Run the training pipeline:
-
+### 3. Two-Stage Training
 ```bash
 python train_twin_verification.py
 ```
 
-The training script will:
-- Load the combined model (frozen AdaFace + trainable ResNet50)
-- Create triplet datasets with random negative sampling
-- Train using triplet loss with margin
-- Save checkpoints and logs to `twin_verification_training/`
+The training automatically handles both stages:
+- **Stage 1 (0-60 epochs)**: Random negative sampling for general discrimination
+- **Stage 2 (61-100 epochs)**: Twin negative sampling for hard negative mining
 
-### Step 3: Monitor Training
-
-Use TensorBoard to monitor training progress:
-
+### 4. Monitor Training Progress
 ```bash
 tensorboard --logdir twin_verification_training/logs
 ```
 
-## Configuration
+Key metrics to monitor:
+- **Train/Twin_Negative_Ratio**: Shows the proportion of twin negatives (0.0 in Stage 1, high in Stage 2)
+- **Train/Current_Stage**: Current training stage (1 or 2)
+- **Stage-specific losses**: Separate tracking for each stage
 
-Edit the `config` dictionary in `train_twin_verification.py` to customize:
-
-### Model Parameters
-- `adaface_arch`: AdaFace architecture ('ir_50')
-- `face_parts_embedding_dim`: Dimension of face parts features (128)
-- `freeze_adaface`: Whether to freeze AdaFace weights (True)
-
-### Training Parameters
-- `num_epochs`: Number of training epochs (100)
-- `batch_size`: Batch size (8)
-- `learning_rate`: Initial learning rate (1e-4)
-- `triplet_margin`: Margin for triplet loss (1.0)
-
-### Data Parameters
-- `train_split`: Train/validation split ratio (0.8)
-- `tensor_dataset_path`: Path to tensor dataset JSON
-- `face_parts_dataset_path`: Path to face parts dataset JSON
-- `twin_pairs_path`: Path to twin pairs JSON
-
-## Data Format
-
-### tensor_dataset.json
-```json
-{
-  "90003": [
-    "/path/to/90003d1.pt",
-    "/path/to/90003d2.pt"
-  ],
-  "90004": [
-    "/path/to/90004d1.pt"
-  ]
-}
+### 5. Test Inference
+```bash
+python test_inference.py
 ```
 
-### jpg_dataset.json
-```json
-{
-  "90003": [
-    "/path/to/90003d1.jpg",
-    "/path/to/90003d2.jpg"
-  ],
-  "90004": [
-    "/path/to/90004d1.jpg"
-  ]
-}
+### 6. Evaluate Model
+```bash
+python model_evaluation_twin.py
 ```
 
-### twin_pairs.json
-```json
-[
-  ["90003", "90004"],
-  ["90005", "90006"]
-]
-```
+## Training Configuration
 
-## Model Architecture Details
-
-### AdaFace (Frozen)
-- IR-50 architecture
-- Input: 3×112×112 tensors
-- Output: 512D global features
-- Weights frozen during training
-
-### Face Parts ResNet50 (Trainable)
-- 5 separate ResNet50 models for each face part
-- Input: 3×224×224 images per part
-- Output: 128D features per part
-- Total: 640D local features
-
-### Combined Model
-- Concatenates global (512D) + local (640D) = 1152D
-- Final projection: 1152D → 512D → 256D
-- Uses triplet loss for similarity learning
-
-## Training Process
-
-1. **Face Parts Extraction**: Pre-extract and save all face parts
-2. **Triplet Generation**: Random negative sampling for each epoch
-3. **Forward Pass**: Extract features using combined model
-4. **Loss Computation**: Triplet loss with margin
-5. **Backpropagation**: Only train ResNet50 parts (AdaFace frozen)
-6. **Validation**: Monitor validation loss for early stopping
-
-## Output
-
-Training produces:
-- `twin_verification_training/checkpoints/best.pth`: Best model checkpoint
-- `twin_verification_training/checkpoints/latest.pth`: Latest checkpoint
-- `twin_verification_training/logs/`: TensorBoard logs
-- Model can be loaded for inference or further fine-tuning
-
-## Inference
-
-To use the trained model for twin verification:
-
+### Two-Stage Parameters
 ```python
-from combined_model import TwinVerificationModel
-import torch
-
-# Load trained model
-model = TwinVerificationModel()
-checkpoint = torch.load('twin_verification_training/checkpoints/best.pth')
-model.load_state_dict(checkpoint['model_state_dict'])
-model.eval()
-
-# Extract features for two face images
-features1, _, _, _ = model(face_tensor1, face_parts_dict1)
-features2, _, _, _ = model(face_tensor2, face_parts_dict2)
-
-# Compute similarity
-similarity = torch.nn.functional.cosine_similarity(features1, features2)
+config = {
+    # Two-Stage Training
+    'stage_1_epochs': 60,           # General discrimination phase
+    'stage_2_epochs': 40,           # Twin-specific phase
+    
+    # Stage 2 fine-tuning
+    'stage_2_lr_factor': 0.1,       # Reduce LR for stage 2 (optional)
+    'reset_scheduler_stage_2': False, # Reset scheduler for stage 2
+    
+    # Training parameters
+    'batch_size': 8,
+    'learning_rate': 1e-4,
+    'triplet_margin': 1.0,
+}
 ```
 
-## Hardware Requirements
+### Negative Sampling Strategies
+- **'random'**: Stage 1 - Random negatives from all people
+- **'twin'**: Stage 2 - Twin siblings as negatives
+- **'mixed'**: 50/50 mix (for experimentation)
 
-- GPU with at least 8GB VRAM recommended
-- 16GB+ RAM for data loading
-- SSD storage for faster data access
+### Resume Training
+```python
+config['resume'] = True  # Resumes from latest checkpoint with correct stage
+```
 
-## Notes
+## Advanced Usage
 
-- The system is specifically designed for twin verification (same/different person)
-- Random negative sampling provides diverse training data
-- Face parts extraction requires MediaPipe landmarks detection
-- AdaFace weights remain frozen to preserve pretrained knowledge
-- Only ResNet50 face parts models are trained for twin-specific features 
+### Custom Stage Configuration
+```python
+# Quick stage 1 → long stage 2
+config.update({
+    'stage_1_epochs': 30,
+    'stage_2_epochs': 70,
+    'stage_2_lr_factor': 0.05,  # More aggressive LR reduction
+})
+
+# Equal stages
+config.update({
+    'stage_1_epochs': 50,
+    'stage_2_epochs': 50,
+})
+```
+
+### Manual Stage Control
+```python
+# Start directly from stage 2 (if you have a pre-trained stage 1 model)
+trainer = TwinVerificationTrainer(config)
+trainer.current_stage = 2
+trainer._setup_data_loaders(negative_strategy='twin')
+trainer.train()
+```
+
+## File Structure
+
+### Training Files
+- `train_twin_verification.py` - Two-stage training script
+- `combined_model.py` - Complete model architecture
+- `triplet_dataset.py` - Dataset with stage-aware negative sampling
+- `face_parts_model.py` - ResNet50 face parts models
+
+### Inference Files
+- `twin_inference.py` - Inference with both image and tensor inputs
+- `model_evaluation_twin.py` - Comprehensive evaluation for twin verification
+- `test_inference.py` - Test inference functionality
+
+### Preprocessing
+- `face_parts_extractor.py` - MediaPipe-based face parts extraction
+- `run_extraction.py` - User-friendly extraction script
+
+### Legacy Files
+- `inference.py` - Original AdaFace-only inference
+- `model_evaluation.py` - Original evaluation (incompatible with two-stage model)
+
+## Checkpoints and Resume
+
+The system saves multiple checkpoints:
+- `latest.pth` - Most recent checkpoint with stage information
+- `best.pth` - Best overall validation loss
+- `stage_1_complete.pth` - Stage 1 completion checkpoint
+- `stage_2_complete.pth` - Final model checkpoint
+
+Resume automatically detects the current stage and continues appropriately.
+
+## Evaluation Metrics
+
+### Performance Indicators
+- **EER (Equal Error Rate)**: Primary metric for twin verification
+- **Stage-specific best losses**: Track improvement within each stage
+- **Twin negative ratio**: Monitor hard negative mining effectiveness
+- **AUC**: Area under ROC curve
+
+### Expected Performance Patterns
+- **Stage 1**: Rapid initial improvement, plateaus as general features are learned
+- **Stage 2**: Slower but steady improvement as twin-specific features develop
+- **Overall**: Stage 2 should achieve lower final EER than stage 1 plateau
+
+## Tips for Best Results
+
+### Stage Duration
+- **More twin data**: Increase stage 2 duration
+- **Limited twin data**: Focus on longer stage 1 for general features
+- **Large dataset**: Equal stages often work well
+
+### Learning Rate Strategy
+- **Conservative**: `stage_2_lr_factor = 0.1` for fine-tuning
+- **Aggressive**: `stage_2_lr_factor = 0.01` for minimal changes
+- **Reset scheduler**: Use for completely independent stage training
+
+### Data Requirements
+- **Minimum**: 2+ images per person, 1+ twin pair
+- **Recommended**: 5+ images per person, 3+ twin pairs
+- **Optimal**: 10+ images per person, 5+ twin pairs
+
+## Troubleshooting
+
+### Common Issues
+1. **Low twin negative ratio in stage 2**: Check twin_pairs.json format
+2. **No improvement in stage 2**: Try reducing learning rate further
+3. **Memory issues**: Reduce batch size or face parts resolution
+4. **Stage switching errors**: Ensure proper checkpoint format
+
+### Debugging
+```bash
+# Check dataset statistics
+python -c "
+from triplet_dataset import TwinTripletDataset
+dataset = TwinTripletDataset('tensor_dataset.json', 'extracted_face_parts/face_parts_dataset.json', 'twin_pairs.json', negative_strategy='twin')
+print(dataset.get_strategy_statistics())
+"
+```
+
+This two-stage approach significantly improves twin verification performance by first establishing general face discrimination capabilities, then refining the model with challenging twin-specific examples.
+
+## System Requirements
+- CUDA-capable GPU (recommended)
+- 8GB+ GPU memory for batch_size=8
+- Python 3.8+
+- See `requirements.txt` for complete dependencies 

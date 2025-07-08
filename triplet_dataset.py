@@ -11,7 +11,7 @@ class TwinTripletDataset(Dataset):
     """Dataset for triplet learning with twin verification"""
     
     def __init__(self, tensor_dataset_path, face_parts_dataset_path, twin_pairs_path, 
-                 mode='train', train_split=0.8, face_parts_transform=None):
+                 mode='train', train_split=0.8, face_parts_transform=None, negative_strategy='random'):
         """
         Initialize the triplet dataset
         
@@ -22,8 +22,10 @@ class TwinTripletDataset(Dataset):
             mode: 'train' or 'val' 
             train_split: Ratio for train/val split
             face_parts_transform: Transform for face parts images
+            negative_strategy: 'random' for stage 1, 'twin' for stage 2, 'mixed' for both
         """
         self.mode = mode
+        self.negative_strategy = negative_strategy
         
         # Load datasets
         with open(tensor_dataset_path, 'r') as f:
@@ -55,8 +57,13 @@ class TwinTripletDataset(Dataset):
         # Create person ID lists for negative sampling
         self._setup_person_ids()
         
+        # Create twin relationships mapping
+        self._setup_twin_relationships()
+        
         # Generate triplets for the current epoch
         self._generate_triplets()
+        
+        print(f"Dataset initialized with negative_strategy='{negative_strategy}', mode='{mode}'")
     
     def _create_train_val_split(self, train_split):
         """Split twin pairs into train and validation sets"""
@@ -75,8 +82,64 @@ class TwinTripletDataset(Dataset):
             self.person_ids.update(pair)
         self.person_ids = list(self.person_ids)
     
+    def _setup_twin_relationships(self):
+        """Set up twin relationship mappings"""
+        self.person_to_twin = {}  # Maps person_id to their twin_id
+        self.twins_in_current_split = set()
+        
+        for twin_id1, twin_id2 in self.twin_pairs:
+            # Check if both twins are in current split
+            if twin_id1 in self.person_ids and twin_id2 in self.person_ids:
+                self.person_to_twin[twin_id1] = twin_id2
+                self.person_to_twin[twin_id2] = twin_id1
+                self.twins_in_current_split.add(twin_id1)
+                self.twins_in_current_split.add(twin_id2)
+        
+        # Create lists for different negative sampling strategies
+        self.non_twin_persons = [pid for pid in self.person_ids if pid not in self.twins_in_current_split]
+        self.twin_persons = list(self.twins_in_current_split)
+        
+        print(f"Twin relationships: {len(self.person_to_twin)//2} twin pairs in current split")
+        print(f"Non-twin persons: {len(self.non_twin_persons)}")
+        print(f"Twin persons: {len(self.twin_persons)}")
+    
+    def _get_negative_person(self, anchor_person):
+        """Get negative person based on current strategy"""
+        if self.negative_strategy == 'random':
+            # Stage 1: Random non-twin negatives (easier)
+            available_negatives = [pid for pid in self.person_ids if pid != anchor_person]
+            return random.choice(available_negatives)
+            
+        elif self.negative_strategy == 'twin':
+            # Stage 2: Twin negatives (harder)
+            if anchor_person in self.person_to_twin:
+                # If anchor has a twin, use the twin as negative
+                return self.person_to_twin[anchor_person]
+            else:
+                # If anchor doesn't have a twin, use another twin person
+                if len(self.twin_persons) > 0:
+                    return random.choice(self.twin_persons)
+                else:
+                    # Fallback to random if no twins available
+                    available_negatives = [pid for pid in self.person_ids if pid != anchor_person]
+                    return random.choice(available_negatives)
+                    
+        elif self.negative_strategy == 'mixed':
+            # Mix of both strategies
+            if random.random() < 0.5:
+                # 50% chance of twin negative
+                if anchor_person in self.person_to_twin:
+                    return self.person_to_twin[anchor_person]
+            
+            # Random negative (either by design or fallback)
+            available_negatives = [pid for pid in self.person_ids if pid != anchor_person]
+            return random.choice(available_negatives)
+            
+        else:
+            raise ValueError(f"Unknown negative_strategy: {self.negative_strategy}")
+    
     def _generate_triplets(self, num_triplets_per_person=3):
-        """Generate triplets for the current epoch"""
+        """Generate triplets for the current epoch based on negative strategy"""
         self.triplets = []
         
         for person_id in self.person_ids:
@@ -93,16 +156,54 @@ class TwinTripletDataset(Dataset):
                 # Choose anchor and positive from same person
                 anchor_img, positive_img = random.sample(person_images, 2)
                 
-                # Choose negative from different person (random sampling)
-                negative_person = random.choice([pid for pid in self.person_ids if pid != person_id])
+                # Choose negative based on current strategy
+                negative_person = self._get_negative_person(person_id)
                 if negative_person in self.tensor_dataset and len(self.tensor_dataset[negative_person]) > 0:
                     negative_img = random.choice(self.tensor_dataset[negative_person])
                     
                     self.triplets.append({
                         'anchor': (person_id, anchor_img),
                         'positive': (person_id, positive_img),
-                        'negative': (negative_person, negative_img)
+                        'negative': (negative_person, negative_img),
+                        'strategy': self.negative_strategy
                     })
+        
+        print(f"Generated {len(self.triplets)} triplets using '{self.negative_strategy}' strategy")
+    
+    def set_negative_strategy(self, strategy):
+        """Change the negative sampling strategy and regenerate triplets"""
+        if strategy not in ['random', 'twin', 'mixed']:
+            raise ValueError(f"Invalid strategy: {strategy}. Must be 'random', 'twin', or 'mixed'")
+        
+        self.negative_strategy = strategy
+        print(f"Switching to negative strategy: '{strategy}'")
+        self._generate_triplets()
+    
+    def get_strategy_statistics(self):
+        """Get statistics about current triplets"""
+        if not hasattr(self, 'triplets') or len(self.triplets) == 0:
+            return {}
+        
+        twin_negatives = 0
+        non_twin_negatives = 0
+        
+        for triplet in self.triplets:
+            anchor_person = triplet['anchor'][0]
+            negative_person = triplet['negative'][0]
+            
+            # Check if negative is twin of anchor
+            if anchor_person in self.person_to_twin and self.person_to_twin[anchor_person] == negative_person:
+                twin_negatives += 1
+            else:
+                non_twin_negatives += 1
+        
+        return {
+            'total_triplets': len(self.triplets),
+            'twin_negatives': twin_negatives,
+            'non_twin_negatives': non_twin_negatives,
+            'twin_negative_ratio': twin_negatives / len(self.triplets) if len(self.triplets) > 0 else 0,
+            'strategy': self.negative_strategy
+        }
     
     def _load_tensor_file(self, tensor_path):
         """Load .pt tensor file for AdaFace"""
@@ -259,7 +360,7 @@ def collate_triplets(batch):
     }
 
 def create_data_loaders(tensor_dataset_path, face_parts_dataset_path, twin_pairs_path,
-                       batch_size=8, num_workers=2, train_split=0.8):
+                       batch_size=8, num_workers=2, train_split=0.8, negative_strategy='random'):
     """Create train and validation data loaders"""
     
     # Create datasets
@@ -268,7 +369,8 @@ def create_data_loaders(tensor_dataset_path, face_parts_dataset_path, twin_pairs
         face_parts_dataset_path=face_parts_dataset_path,
         twin_pairs_path=twin_pairs_path,
         mode='train',
-        train_split=train_split
+        train_split=train_split,
+        negative_strategy=negative_strategy
     )
     
     val_dataset = TwinTripletDataset(
@@ -276,7 +378,8 @@ def create_data_loaders(tensor_dataset_path, face_parts_dataset_path, twin_pairs
         face_parts_dataset_path=face_parts_dataset_path,
         twin_pairs_path=twin_pairs_path,
         mode='val',
-        train_split=train_split
+        train_split=train_split,
+        negative_strategy=negative_strategy
     )
     
     # Create data loaders
